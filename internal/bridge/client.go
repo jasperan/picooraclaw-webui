@@ -63,6 +63,10 @@ func (c *Client) ListSessions(ctx context.Context) ([]Session, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("upstream %d: %s", resp.StatusCode, string(b))
+	}
 	var out []Session
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
@@ -90,6 +94,10 @@ func (c *Client) SearchMemory(ctx context.Context, query string, limit int) ([]M
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("upstream %d: %s", resp.StatusCode, string(b))
+	}
 	var out []MemoryResult
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err

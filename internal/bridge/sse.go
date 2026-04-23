@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 )
 
 type Event struct {
@@ -21,16 +23,19 @@ type Event struct {
 	Text       string         `json:"text,omitempty"`
 	Error      string         `json:"error,omitempty"`
 	Note       string         `json:"note,omitempty"`
+	Timestamp  time.Time      `json:"ts"`
 }
 
 // Stream opens an SSE connection to /v1/events and sends parsed events to out.
 // Returns when ctx is cancelled or the upstream closes. The caller owns 'out' and
 // may close it after Stream returns.
 func (c *Client) Stream(ctx context.Context, sessionID, from string, out chan<- Event) error {
-	u := c.resolve("/v1/events") + fmt.Sprintf("?session_id=%s", sessionID)
+	q := url.Values{}
+	q.Set("session_id", sessionID)
 	if from != "" {
-		u += "&from=" + from
+		q.Set("from", from)
 	}
+	u := c.resolve("/v1/events") + "?" + q.Encode()
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return err
@@ -52,7 +57,7 @@ func (c *Client) Stream(ctx context.Context, sessionID, from string, out chan<- 
 		if err != nil {
 			return err
 		}
-		line = strings.TrimRight(line, "\n")
+		line = strings.TrimRight(line, "\r\n")
 		if !strings.HasPrefix(line, "data:") {
 			continue
 		}

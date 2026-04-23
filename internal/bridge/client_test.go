@@ -81,3 +81,29 @@ func TestClient_SearchMemory(t *testing.T) {
 		t.Fatalf("got %+v err=%v", r, err)
 	}
 }
+
+func TestClient_ListSessions_ErrorStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		_, _ = w.Write([]byte("internal server error"))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "")
+	_, err := c.ListSessions(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "upstream 500") {
+		t.Fatalf("expected upstream 500 error, got %v", err)
+	}
+}
+
+func TestClient_SearchMemory_ErrorStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		_, _ = w.Write([]byte("internal server error"))
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "")
+	_, err := c.SearchMemory(context.Background(), "go", 5)
+	if err == nil || !strings.Contains(err.Error(), "upstream 500") {
+		t.Fatalf("expected upstream 500 error, got %v", err)
+	}
+}
