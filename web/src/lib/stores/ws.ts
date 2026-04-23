@@ -25,12 +25,28 @@ let ws: WebSocket | null = null;
 let eventHandlers: Array<(e: AgentEvent) => void> = [];
 let reconnectDelay = 250;
 
+// Queue of frames to flush when the socket opens. Svelte stores fire their
+// subscribers synchronously on assignment, so subscribe() can be called before
+// the WebSocket is OPEN — we hold those frames here instead of dropping them.
+let pending: OutgoingFrame[] = [];
+
+// The last subscribe frame. On reconnect, we replay it so the new socket
+// immediately re-subscribes to the active session.
+let lastSubscribe: { type: 'subscribe'; session_id: string; from?: string } | null = null;
+
 export function connect() {
 	const url = location.origin.replace(/^http/, 'ws') + '/ws';
 	ws = new WebSocket(url);
 	ws.onopen = () => {
 		wsConnected.set(true);
 		reconnectDelay = 250;
+		if (lastSubscribe) {
+			ws!.send(JSON.stringify(lastSubscribe));
+		}
+		for (const f of pending) {
+			ws!.send(JSON.stringify(f));
+		}
+		pending = [];
 	};
 	ws.onmessage = (ev) => {
 		try {
@@ -53,7 +69,9 @@ export function connect() {
 }
 
 export function subscribe(sessionId: string, from?: string) {
-	send({ type: 'subscribe', session_id: sessionId, from });
+	const frame: OutgoingFrame = { type: 'subscribe', session_id: sessionId, from };
+	lastSubscribe = { type: 'subscribe', session_id: sessionId, from };
+	send(frame);
 }
 
 export function sendMessage(sessionId: string, text: string) {
@@ -68,6 +86,9 @@ export function onEvent(h: (e: AgentEvent) => void) {
 }
 
 function send(frame: OutgoingFrame) {
-	if (!ws || ws.readyState !== WebSocket.OPEN) return;
-	ws.send(JSON.stringify(frame));
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		ws.send(JSON.stringify(frame));
+		return;
+	}
+	pending.push(frame);
 }
