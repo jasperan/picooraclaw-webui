@@ -1,0 +1,65 @@
+# Agent/skill local dirs (never commit)
+.agents/
+.claude/
+.crush/
+.openhands/
+.serena/
+.omc/
+.superpowers/
+
+# Build artifacts
+bin/
+build/
+dist/
+out/
+*.exe
+
+# Go
+*.test
+*.out
+coverage.*
+vendor/
+
+# Node / SvelteKit
+node_modules/
+.svelte-kit/
+.vite/
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+.playwright-mcp/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.key
+*credentials*
+*secret*
+
+# Dogfood evidence (local only)
+docs/dogfood/
+dogfood-output/
+
+# Planning (local only)
+docs/plans/
+task_plan.md
+findings.md
+progress.md
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+Thumbs.db
