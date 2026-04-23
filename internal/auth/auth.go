@@ -19,13 +19,55 @@ type Gate struct {
 
 	mu       sync.Mutex
 	attempts map[string][]time.Time
+	done     chan struct{}
+	once     sync.Once
 }
 
 func NewGate(password, secret string) *Gate {
-	return &Gate{
+	g := &Gate{
 		password: password,
 		secret:   []byte(secret),
 		attempts: make(map[string][]time.Time),
+		done:     make(chan struct{}),
+	}
+	go g.sweepLoop()
+	return g
+}
+
+// Stop halts the background cooldown sweeper. Idempotent.
+func (g *Gate) Stop() {
+	g.once.Do(func() { close(g.done) })
+}
+
+func (g *Gate) sweepLoop() {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-g.done:
+			return
+		case <-ticker.C:
+			g.sweep()
+		}
+	}
+}
+
+func (g *Gate) sweep() {
+	cutoff := time.Now().Add(-30 * time.Second)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for ip, ts := range g.attempts {
+		kept := ts[:0]
+		for _, t := range ts {
+			if t.After(cutoff) {
+				kept = append(kept, t)
+			}
+		}
+		if len(kept) == 0 {
+			delete(g.attempts, ip)
+		} else {
+			g.attempts[ip] = kept
+		}
 	}
 }
 
