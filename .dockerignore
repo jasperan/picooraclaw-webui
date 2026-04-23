@@ -1,0 +1,16 @@
+.git
+.gitignore
+bin/
+web/node_modules/
+web/.svelte-kit/
+web/build/
+.superpowers/
+docs/
+*.md
+!README.md
+.agents/
+.claude/
+.crush/
+.openhands/
+.serena/
+.omc/
