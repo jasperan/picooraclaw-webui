@@ -104,10 +104,15 @@ func handleWS(ctx context.Context, c *websocket.Conn, d Deps) {
 			currentSession = f.SessionID
 			d.Hub.Register(conn, currentSession)
 		case "send":
+			if currentSession == "" {
+				// Protocol: must subscribe before sending.
+				continue
+			}
 			if f.SessionID == "" || f.Text == "" {
 				continue
 			}
-			_, _ = d.Client.PostChat(ctx, f.SessionID, f.Text, "")
+			// Pin to the subscribed session to prevent session spoofing.
+			_, _ = d.Client.PostChat(ctx, currentSession, f.Text, "")
 		}
 	}
 }

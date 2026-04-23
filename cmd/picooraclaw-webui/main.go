@@ -87,10 +87,30 @@ func runSSEPump(ctx context.Context, client *bridge.Client, hub *ws.Hub, session
 					if !ok {
 						return
 					}
-					buf, _ := json.Marshal(e)
+					buf, err := json.Marshal(e)
+					if err != nil {
+						log.Printf("sse pump: marshal: %v", err)
+						continue
+					}
 					hub.Broadcast(e.SessionID, ws.Frame{Type: "event", Payload: buf})
 				case <-done:
-					return
+					// Drain any remaining buffered events before reconnecting.
+					for {
+						select {
+						case e, ok := <-events:
+							if !ok {
+								return
+							}
+							buf, err := json.Marshal(e)
+							if err != nil {
+								log.Printf("sse pump: marshal: %v", err)
+								continue
+							}
+							hub.Broadcast(e.SessionID, ws.Frame{Type: "event", Payload: buf})
+						default:
+							return
+						}
+					}
 				case <-ctx.Done():
 					return
 				}
