@@ -54,10 +54,28 @@ func TestHub_Unregister(t *testing.T) {
 	h.Register(c, "s1")
 	h.Unregister(c)
 	h.Broadcast("s1", Frame{Type: "event", Payload: []byte(`{"t":"x"}`)})
-	time.Sleep(20 * time.Millisecond)
 	if c.frameCount() != 0 {
 		t.Fatalf("unregistered conn should not receive, got %d", c.frameCount())
 	}
+}
+
+func TestHub_ConcurrentRegisterAndBroadcast(t *testing.T) {
+	h := NewHub()
+	defer h.Close()
+
+	var wg sync.WaitGroup
+	const N = 50
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c := &fakeConn{id: "c"}
+			h.Register(c, "s1")
+			h.Broadcast("s1", Frame{Type: "event", Payload: []byte(`{"t":"x"}`)})
+			h.Unregister(c)
+		}()
+	}
+	wg.Wait()
 }
 
 func waitFrame(t *testing.T, c *fakeConn) {

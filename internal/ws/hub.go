@@ -19,6 +19,7 @@ type Hub struct {
 	mu    sync.RWMutex
 	conns map[string]map[Conn]struct{}
 	done  chan struct{}
+	once  sync.Once
 }
 
 func NewHub() *Hub {
@@ -37,6 +38,8 @@ func (h *Hub) Register(c Conn, sessionID string) {
 	h.conns[sessionID][c] = struct{}{}
 }
 
+// Unregister removes c from every session's set. Callers own the connection
+// lifecycle — Unregister does not call c.Close().
 func (h *Hub) Unregister(c Conn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -62,4 +65,6 @@ func (h *Hub) Broadcast(sessionID string, f Frame) {
 	}
 }
 
-func (h *Hub) Close() { close(h.done) }
+func (h *Hub) Close() {
+	h.once.Do(func() { close(h.done) })
+}
