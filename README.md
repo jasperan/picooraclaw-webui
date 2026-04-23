@@ -74,6 +74,22 @@ Dockerfile              Multi-stage: node → go → alpine (~35 MB runtime)
 docker-compose.yml      oracle + picooraclaw + webui bundle
 ```
 
+## Full end-to-end (manual)
+
+The compose-level smoke test drives the live stack (Oracle + picooraclaw + webui) through login, sessions, and memory search. It's gated behind `E2E_COMPOSE=1` so CI doesn't run it by default (Oracle boot is ~2 min).
+
+```bash
+# Start the full stack and wait for Oracle to become healthy
+docker compose up -d
+docker compose ps   # oracle must show (healthy) before continuing
+
+# Run the compose-level Playwright smoke
+cd web
+E2E_COMPOSE=1 WEBUI_URL=http://localhost:3000 npx playwright test tests/e2e-compose.spec.ts
+```
+
+Set `WEBUI_URL` if you changed `WEBUI_PORT` in `.env`.
+
 ## License
 
 MIT. See `LICENSE`.
