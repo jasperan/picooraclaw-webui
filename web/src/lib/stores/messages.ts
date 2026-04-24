@@ -71,50 +71,57 @@ export function applyEvent(sessionId: string, e: AgentEvent) {
 			break;
 		}
 		case 'message_end': {
-			update(sessionId, (msgs) => {
-				const m = findAssistant(msgs, e.message_id);
-				if (!m) return msgs;
-				if (e.text !== undefined) m.text = e.text;
-				m.streaming = false;
-				return [...msgs];
-			});
+			update(sessionId, (msgs) =>
+				msgs.map((m) =>
+					m.role === 'assistant' && m.id === e.message_id
+						? { ...m, text: e.text ?? m.text, streaming: false }
+						: m
+				)
+			);
 			break;
 		}
 		case 'tool_call_start': {
 			update(sessionId, (msgs) => {
-				const m = findAssistant(msgs, e.message_id);
-				if (!m) return msgs;
-				m.toolCalls.push({
+				const target = findAssistant(msgs, e.message_id);
+				if (!target) return msgs;
+				const newCall = {
 					id: e.id ?? `t-${Date.now()}`,
 					tool: e.tool ?? '',
 					args: e.args,
 					running: true
-				});
-				return [...msgs];
+				};
+				return msgs.map((m) =>
+					m === target ? { ...m, toolCalls: [...m.toolCalls, newCall] } : m
+				);
 			});
 			break;
 		}
 		case 'tool_call_end': {
 			update(sessionId, (msgs) => {
-				const m = findAssistant(msgs, e.message_id);
-				if (!m) return msgs;
-				const tc = m.toolCalls.find((t) => t.id === e.id);
-				if (tc) {
-					tc.result = e.result;
-					tc.ok = e.ok;
-					tc.running = false;
-				}
-				return [...msgs];
+				const target = findAssistant(msgs, e.message_id);
+				if (!target) return msgs;
+				return msgs.map((m) =>
+					m === target
+						? {
+								...m,
+								toolCalls: m.toolCalls.map((t) =>
+									t.id === e.id
+										? { ...t, result: e.result, ok: e.ok, running: false }
+										: t
+								)
+							}
+						: m
+				);
 			});
 			break;
 		}
 		case 'error': {
 			update(sessionId, (msgs) => {
-				const m = findAssistant(msgs, e.message_id);
-				if (m) {
-					m.error = e.error;
-					m.streaming = false;
-					return [...msgs];
+				const target = findAssistant(msgs, e.message_id);
+				if (target) {
+					return msgs.map((m) =>
+						m === target ? { ...m, error: e.error, streaming: false } : m
+					);
 				}
 				// No pending assistant — create a standalone error message.
 				return [
