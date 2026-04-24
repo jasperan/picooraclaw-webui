@@ -46,6 +46,38 @@ describe('messages store', () => {
 		expect(list[1].toolCalls[0].result).toBe('ok');
 	});
 
+	it('applyEvent returns new Message identity so Svelte 5 runes react', () => {
+		// Regression guard for the dogfood-found bug where in-place mutation
+		// of the existing Message object left MessageBubble's $props() stale.
+		applyEvent('s3', { type: 'message_start', session_id: 's3', message_id: 'm3' });
+		const before = get(messagesBySession).s3[0];
+		applyEvent('s3', {
+			type: 'tool_call_start',
+			session_id: 's3',
+			message_id: 'm3',
+			id: 'tc3',
+			tool: 'remember'
+		});
+		const after = get(messagesBySession).s3[0];
+		// New Message identity + new toolCalls array identity on each event.
+		expect(after).not.toBe(before);
+		expect(after.toolCalls).not.toBe(before.toolCalls);
+
+		const beforeToolCalls = after.toolCalls;
+		applyEvent('s3', {
+			type: 'tool_call_end',
+			session_id: 's3',
+			message_id: 'm3',
+			id: 'tc3',
+			ok: true,
+			result: 'ok'
+		});
+		const final = get(messagesBySession).s3[0];
+		expect(final).not.toBe(after);
+		expect(final.toolCalls).not.toBe(beforeToolCalls);
+		expect(final.toolCalls[0]).not.toBe(after.toolCalls[0]);
+	});
+
 	it('records error events on the pending assistant message', () => {
 		appendUserMessage('s2', 'hi');
 		applyEvent('s2', { type: 'message_start', session_id: 's2', message_id: 'm2' });

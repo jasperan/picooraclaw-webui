@@ -35,6 +35,9 @@ let pending: OutgoingFrame[] = [];
 let lastSubscribe: { type: 'subscribe'; session_id: string; from?: string } | null = null;
 
 export function connect() {
+	// Drop any frames left over from a failed previous attempt so we don't
+	// replay a stale subscribe (and double-register in the hub) on reconnect.
+	pending = [];
 	const url = location.origin.replace(/^http/, 'ws') + '/ws';
 	ws = new WebSocket(url);
 	ws.onopen = () => {
