@@ -2,6 +2,20 @@
 
 A browser UI for [picooraclaw](https://github.com/jasperan/picooraclaw), the Oracle-backed autonomous agent. Stream reasoning events, browse memory, and drive sessions from your laptop.
 
+![Login: split-screen panel with the picooraclaw mark, animated amber orb, and a single password field guarded by HMAC-signed cookies.](docs/screenshots/01-login.png)
+
+## Screenshots
+
+A quick tour of the interface (zinc-950 base, single amber accent, Geist throughout):
+
+| Welcome | Conversation |
+|---|---|
+| ![Empty state with three suggestion tiles for explore, analyze, and plan flows.](docs/screenshots/02-welcome.png) | ![A user message in the feed asking picooraclaw to summarize an Oracle vector index migration.](docs/screenshots/03-chat.png) |
+
+| Memory drawer | Mobile |
+|---|---|
+| ![Right-side glass drawer with Oracle AI · vector eyebrow, semantic search input, and live results count.](docs/screenshots/04-memory.png) | ![Mobile viewport at 390px showing collapsed sidebar with hamburger trigger.](docs/screenshots/05-mobile.png) |
+
 ## What's inside
 
 - **Go bridge** (`cmd/picooraclaw-webui`) — exposes picooraclaw's IPC socket over HTTP + WebSocket
