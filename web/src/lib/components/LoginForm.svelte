@@ -57,7 +57,7 @@
 		</div>
 		<div class="foot">
 			<span class="status-dot"></span>
-			<span class="foot-text">v1 · oracle free 23ai</span>
+			<span class="foot-text">v1 · Oracle AI Database</span>
 		</div>
 	</aside>
 

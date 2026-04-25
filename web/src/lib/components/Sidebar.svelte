@@ -87,7 +87,7 @@
 
 	<footer>
 		<span class="foot-dot" aria-hidden="true"></span>
-		<span class="foot-text">oracle free · 23ai</span>
+		<span class="foot-text">Oracle AI Database</span>
 		<span class="foot-ver">v1</span>
 	</footer>
 </aside>
