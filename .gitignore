@@ -53,6 +53,9 @@ playwright/.cache/
 docs/dogfood/
 dogfood-output/
 
+# stack.sh runtime (logs, pidfiles, bootstrap markers)
+.run/
+
 # Planning (local only)
 docs/plans/
 task_plan.md
