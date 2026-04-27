@@ -106,11 +106,23 @@ ensure_oracle_container() {
     dk start "${ORACLE_CONTAINER}" >/dev/null
   else
     log "oracle: creating container ${ORACLE_CONTAINER} (gvenzl/oracle-free:latest, ~2 min cold start)"
+    # Notes:
+    #   * Explicit --health-* flags so we don't depend on whatever the image
+    #     ships as default; downstream services key off `docker inspect`'s
+    #     Health.Status.
+    #   * No ORACLE_DATABASE=FREEPDB1 — when the persistent volume already
+    #     contains FREEPDB1, gvenzl re-runs CREATE PLUGGABLE DATABASE on every
+    #     start and crashes with ORA-65012. Without the env var the container
+    #     attaches to whatever PDB is already in /opt/oracle/oradata, and a
+    #     fresh volume still gets FREEPDB1 (image default).
     dk run -d \
       --name "${ORACLE_CONTAINER}" \
       -p "${ORACLE_HOST_PORT}:1521" \
       -e "ORACLE_PASSWORD=${ORACLE_PWD}" \
-      -e "ORACLE_DATABASE=FREEPDB1" \
+      --health-cmd="/opt/oracle/healthcheck.sh" \
+      --health-interval=20s \
+      --health-start-period=60s \
+      --health-retries=10 \
       -v picooraclaw-oracle-data:/opt/oracle/oradata \
       gvenzl/oracle-free:latest >/dev/null
   fi
@@ -195,9 +207,9 @@ oracle_config_patch() {
     err "oracle: ${cfg} missing — run picooraclaw onboard first"
     exit 1
   fi
-  python3 - "${cfg}" "${ORACLE_PWD}" "${ORACLE_HOST_PORT}" "${ONNX_MODEL_NAME}" <<'PY'
+  python3 - "${cfg}" "${ORACLE_PWD}" "${ORACLE_HOST_PORT}" "${ONNX_MODEL_NAME}" "${WEB_CH_PORT}" <<'PY'
 import json, sys
-cfg_path, pwd, port, onnx_model = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+cfg_path, pwd, port, onnx_model, web_port = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4], int(sys.argv[5])
 with open(cfg_path) as f:
     cfg = json.load(f)
 cfg["oracle"] = {
@@ -210,11 +222,21 @@ cfg["oracle"] = {
     "password": pwd,
     "onnxModel": onnx_model,
 }
+# Belt + suspenders: the gateway's --enable-web flag *should* turn the web
+# channel on, but if that wiring breaks (or someone runs `picooraclaw gateway`
+# without the flag) the port never opens. Pin it in config so the source of
+# truth is one place.
+channels = cfg.setdefault("channels", {})
+web = channels.setdefault("web", {})
+web["enabled"] = True
+web.setdefault("host", "0.0.0.0")
+web.setdefault("port", web_port)
+web.setdefault("token", "")
 with open(cfg_path, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
 PY
-  ok "oracle: ${cfg} patched (oracle.enabled=true)"
+  ok "oracle: ${cfg} patched (oracle.enabled=true, channels.web.enabled=true)"
 }
 
 oracle_schema_init() {

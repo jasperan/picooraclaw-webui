@@ -1,6 +1,16 @@
-.PHONY: build test lint check check-web run sync-static
+.PHONY: build test lint check check-web run frontend sync-static
 
-build: sync-static
+# Build the SvelteKit bundle if it's missing. Without this, an empty
+# web/build/ → empty cmd/picooraclaw-webui/static/ (just .gitkeep) → the
+# go:embed binary serves nothing but .gitkeep at /, which silently breaks
+# the UI for fresh checkouts that haven't run `npm run build`.
+frontend:
+	@if [ ! -f web/build/index.html ]; then \
+	    echo ">>> web/build/index.html missing — running npm install + npm run build"; \
+	    cd web && npm install --no-audit --no-fund && npm run build; \
+	fi
+
+build: frontend sync-static
 	go build -o bin/picooraclaw-webui ./cmd/picooraclaw-webui
 
 test:
@@ -19,7 +29,7 @@ check-web:
 run: build
 	./bin/picooraclaw-webui --picooraclaw-url http://localhost:8090 --listen :3000
 
-sync-static:
+sync-static: frontend
 	@if [ -d web/build ] && [ -n "$$(ls -A web/build 2>/dev/null | grep -v .gitkeep)" ]; then \
 	    rm -rf cmd/picooraclaw-webui/static; \
 	    mkdir -p cmd/picooraclaw-webui/static; \
