@@ -32,15 +32,17 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// v1 SSE pump: single stream subscribed to "default" session.
-	// TODO(post-v1): track active sessions from Hub and run one pump per active session.
-	go runSSEPump(ctx, client, hub, "default")
+	// One SSE pump per subscribed session. Pre-warm "default" for legacy
+	// clients and the v1 protocol; everything else is lazy on subscribe.
+	pumps := NewSessionPumps(ctx, client, hub)
+	pumps.Ensure("default")
 
 	mux := server.NewMux(server.Deps{
-		Gate:   gate,
-		Client: client,
-		Hub:    hub,
-		Static: staticHandler(),
+		Gate:       gate,
+		Client:     client,
+		Hub:        hub,
+		Subscriber: pumps,
+		Static:     staticHandler(),
 	})
 
 	srv := &http.Server{

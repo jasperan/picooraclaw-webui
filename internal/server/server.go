@@ -12,11 +12,19 @@ import (
 	"github.com/jasperan/picooraclaw-webui/internal/ws"
 )
 
+// SessionSubscriber starts (or reuses) an upstream event pump for a
+// session ID. main.go injects an implementation that lazily spawns
+// runSSEPump goroutines per session.
+type SessionSubscriber interface {
+	Ensure(sessionID string)
+}
+
 type Deps struct {
-	Gate   *auth.Gate
-	Client *bridge.Client
-	Hub    *ws.Hub
-	Static http.Handler
+	Gate       *auth.Gate
+	Client     *bridge.Client
+	Hub        *ws.Hub
+	Subscriber SessionSubscriber
+	Static     http.Handler
 }
 
 func NewMux(d Deps) *http.ServeMux {
@@ -103,6 +111,9 @@ func handleWS(ctx context.Context, c *websocket.Conn, d Deps) {
 			}
 			currentSession = f.SessionID
 			d.Hub.Register(conn, currentSession)
+			if d.Subscriber != nil {
+				d.Subscriber.Ensure(currentSession)
+			}
 		case "send":
 			if currentSession == "" {
 				// Protocol: must subscribe before sending.

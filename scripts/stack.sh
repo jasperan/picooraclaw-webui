@@ -309,12 +309,12 @@ start_gateway() {
 # ──────────────────────────────────────────────────────── browser UI ──
 start_webui() {
   if port_listening "${WEBUI_PORT}"; then
-    if pgrep -af 'picooraclaw-webui ' 2>/dev/null | grep -q -- "--picooraclaw-url http://127.0.0.1:${WEB_CH_PORT}"; then
+    if pgrep -af 'bin/picooraclaw-webui ' 2>/dev/null | grep -q -- "--picooraclaw-url http://127.0.0.1:${WEB_CH_PORT}"; then
       ok "webui: already running on :${WEBUI_PORT} → :${WEB_CH_PORT}"
       return 0
     fi
     warn "webui: :${WEBUI_PORT} held by a process not pointing at :${WEB_CH_PORT}, replacing"
-    pkill -f 'picooraclaw-webui ' 2>/dev/null || true
+    pkill -f 'bin/picooraclaw-webui ' 2>/dev/null || true
     sleep 1
   fi
   local bin="${WEBUI_DIR}/bin/picooraclaw-webui"
@@ -387,9 +387,12 @@ cmd_down() {
     fi
     rm -f "$(pidfile "${svc}")"
   done
-  pkill -f 'picooraclaw-webui ' 2>/dev/null || true
-  pkill -f 'picooraclaw gateway' 2>/dev/null || true
-  pkill -f 'oci-genai/proxy.py' 2>/dev/null || true
+  # Patterns are kept tight to the actual daemon argv (so they don't match
+  # bash wrappers / shell tools whose cmdlines happen to contain the script
+  # path "picooraclaw-webui/scripts/stack.sh"). The trailing space is load-bearing.
+  pkill -f 'bin/picooraclaw-webui ' 2>/dev/null || true
+  pkill -f 'build/picooraclaw gateway' 2>/dev/null || true
+  pkill -f 'python3 proxy.py' 2>/dev/null || true
 
   if [[ "${ORACLE_KEEP:-1}" == "0" ]]; then
     detect_docker || true
