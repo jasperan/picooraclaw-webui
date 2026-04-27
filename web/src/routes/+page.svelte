@@ -20,17 +20,23 @@
 	let ready = $state(false);
 	let sidebarOpen = $state(false);
 
-	onMount(async () => {
-		try {
-			const probe = await fetch('/api/sessions');
-			if (probe.status === 401) {
-				needsLogin = true;
-				return;
+	onMount(() => {
+		// Svelte's onMount only allows a synchronous cleanup return; an `async`
+		// callback would resolve to Promise<() => void>, which the runtime
+		// can't unwrap. Run the auth probe as a fire-and-forget, register the
+		// keydown listener synchronously, and return its cleanup directly.
+		void (async () => {
+			try {
+				const probe = await fetch('/api/sessions');
+				if (probe.status === 401) {
+					needsLogin = true;
+					return;
+				}
+			} catch {
+				// Network error — still try to init; ws reconnect will retry.
 			}
-		} catch {
-			// Network error — still try to init; ws reconnect will retry.
-		}
-		initApp();
+			initApp();
+		})();
 
 		const onKey = (e: KeyboardEvent) => {
 			if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
