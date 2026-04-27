@@ -85,34 +85,149 @@ require_picooraclaw_dir() {
 }
 
 # ──────────────────────────────────────────────────────────── Oracle ──
-# We delegate container creation + schema bootstrap entirely to
-# picooraclaw's setup-oracle.sh on first run. Subsequent runs only
-# need to ensure the container is started.
+# Self-contained bootstrap: create container if missing, idempotently set
+# SYS/SYSTEM/picooraclaw passwords + grants, then load the ONNX embedding
+# model via `onnx2oracle` (builds from HuggingFace — no PAR URL to expire).
+
+ORACLE_HOST_PORT="${ORACLE_HOST_PORT:-1521}"
+ONNX_MODEL_NAME="${ONNX_MODEL_NAME:-ALL_MINILM_L12_V2}"
+ONNX_PRESET="${ONNX_PRESET:-all-MiniLM-L12-v2}"
+
+oracle_health() {
+  dk inspect --format '{{.State.Health.Status}}' "${ORACLE_CONTAINER}" 2>/dev/null || echo "missing"
+}
 
 ensure_oracle_container() {
   detect_docker
   if dk ps --format '{{.Names}}' | grep -qx "${ORACLE_CONTAINER}"; then
-    ok "oracle: container ${ORACLE_CONTAINER} already running"
-    return 0
-  fi
-  if dk ps -a --format '{{.Names}}' | grep -qx "${ORACLE_CONTAINER}"; then
+    log "oracle: container ${ORACLE_CONTAINER} already running"
+  elif dk ps -a --format '{{.Names}}' | grep -qx "${ORACLE_CONTAINER}"; then
     log "oracle: starting existing container ${ORACLE_CONTAINER}"
     dk start "${ORACLE_CONTAINER}" >/dev/null
-    log "oracle: waiting for FREEPDB1 (up to 4 min)"
-    local i
-    for i in $(seq 1 48); do
-      if dk exec "${ORACLE_CONTAINER}" sh -c \
-           "echo 'select 1 from dual;' | sqlplus -s system/${ORACLE_PWD}@//localhost:1521/FREEPDB1" 2>/dev/null \
-           | grep -qE '^[[:space:]]*1[[:space:]]*$'; then
-        ok "oracle: ready"
-        return 0
-      fi
-      sleep 5
-    done
-    err "oracle: container started but FREEPDB1 not responding. Check: ${DOCKER} logs ${ORACLE_CONTAINER}"
+  else
+    log "oracle: creating container ${ORACLE_CONTAINER} (gvenzl/oracle-free:latest, ~2 min cold start)"
+    dk run -d \
+      --name "${ORACLE_CONTAINER}" \
+      -p "${ORACLE_HOST_PORT}:1521" \
+      -e "ORACLE_PASSWORD=${ORACLE_PWD}" \
+      -e "ORACLE_DATABASE=FREEPDB1" \
+      -v picooraclaw-oracle-data:/opt/oracle/oradata \
+      gvenzl/oracle-free:latest >/dev/null
+  fi
+  log "oracle: waiting for docker healthcheck (up to 4 min)"
+  local i s
+  for i in $(seq 1 48); do
+    s="$(oracle_health)"
+    [[ "${s}" == "healthy" ]] && { ok "oracle: ready"; return 0; }
+    sleep 5
+  done
+  err "oracle: container did not become healthy. Status: $(oracle_health). Check: ${DOCKER} logs ${ORACLE_CONTAINER}"
+  exit 1
+}
+
+oracle_users_init() {
+  log "oracle: ensuring SYS / SYSTEM / picooraclaw users (idempotent)"
+  dk exec -i "${ORACLE_CONTAINER}" sqlplus -s / as sysdba >/tmp/.stack-sql.out 2>&1 <<SQL || { err "oracle: SQL bootstrap failed (see /tmp/.stack-sql.out)"; tail -n 30 /tmp/.stack-sql.out >&2; exit 1; }
+WHENEVER SQLERROR EXIT FAILURE
+ALTER USER sys IDENTIFIED BY "${ORACLE_PWD}";
+ALTER USER system IDENTIFIED BY "${ORACLE_PWD}";
+ALTER SESSION SET CONTAINER=FREEPDB1;
+DECLARE
+  e_user_exists EXCEPTION;
+  PRAGMA EXCEPTION_INIT(e_user_exists, -1920);
+BEGIN
+  EXECUTE IMMEDIATE 'CREATE USER picooraclaw IDENTIFIED BY "${ORACLE_PWD}" DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS';
+EXCEPTION
+  WHEN e_user_exists THEN
+    EXECUTE IMMEDIATE 'ALTER USER picooraclaw IDENTIFIED BY "${ORACLE_PWD}"';
+END;
+/
+GRANT CREATE SESSION, CREATE TABLE, CREATE PROCEDURE, CREATE SEQUENCE, CREATE VIEW TO picooraclaw;
+GRANT CREATE MINING MODEL TO picooraclaw;
+GRANT EXECUTE ON DBMS_VECTOR TO picooraclaw;
+WHENEVER SQLERROR CONTINUE
+GRANT EXECUTE ON DBMS_VECTOR_CHAIN TO picooraclaw;
+GRANT EXECUTE ON DBMS_DATA_MINING TO picooraclaw;
+GRANT SELECT ON SYS.V_\$PARAMETER TO picooraclaw;
+WHENEVER SQLERROR EXIT FAILURE
+EXIT
+SQL
+  ok "oracle: users + grants ready"
+}
+
+oracle_has_model() {
+  # Query inside FREEPDB1 as the picooraclaw user (the model lives in their schema, not the CDB).
+  # SET commands must be on separate lines (SQL*Plus does not parse them with ';' separators).
+  dk exec "${ORACLE_CONTAINER}" bash -c "printf 'set heading off\nset feedback off\nset pagesize 0\nselect count(*) from user_mining_models where upper(model_name)=upper('\\''${ONNX_MODEL_NAME}'\\'');\n' | sqlplus -s picooraclaw/${ORACLE_PWD}@//localhost:1521/FREEPDB1" 2>/dev/null \
+    | tr -d '[:space:]' | grep -qE '^[1-9]'
+}
+
+ensure_onnx2oracle() {
+  if command -v onnx2oracle >/dev/null 2>&1; then return 0; fi
+  if [[ -x "${HOME}/.local/bin/onnx2oracle" ]]; then
+    export PATH="${HOME}/.local/bin:${PATH}"
+    return 0
+  fi
+  log "onnx2oracle: installing via pip --user"
+  pip install --user --quiet onnx2oracle 2>&1 | tail -5
+  export PATH="${HOME}/.local/bin:${PATH}"
+  command -v onnx2oracle >/dev/null 2>&1 || { err "onnx2oracle: install failed"; exit 1; }
+}
+
+oracle_onnx_init() {
+  if oracle_has_model; then
+    ok "oracle: ${ONNX_MODEL_NAME} already loaded"
+    return 0
+  fi
+  ensure_onnx2oracle
+  log "oracle: building + loading ${ONNX_MODEL_NAME} from HuggingFace via onnx2oracle (~1-3 min)"
+  onnx2oracle load "${ONNX_PRESET}" \
+    --dsn "picooraclaw/${ORACLE_PWD}@localhost:${ORACLE_HOST_PORT}/FREEPDB1" \
+    --force \
+    || { err "oracle: onnx2oracle load failed"; exit 1; }
+  oracle_has_model || { err "oracle: model still not registered after load"; exit 1; }
+  ok "oracle: ${ONNX_MODEL_NAME} registered"
+}
+
+oracle_config_patch() {
+  local cfg="${HOME}/.picooraclaw/config.json"
+  if [[ ! -f "${cfg}" ]]; then
+    err "oracle: ${cfg} missing — run picooraclaw onboard first"
     exit 1
   fi
-  return 2  # container does not exist; let setup-oracle.sh create it
+  python3 - "${cfg}" "${ORACLE_PWD}" "${ORACLE_HOST_PORT}" "${ONNX_MODEL_NAME}" <<'PY'
+import json, sys
+cfg_path, pwd, port, onnx_model = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+with open(cfg_path) as f:
+    cfg = json.load(f)
+cfg["oracle"] = {
+    "enabled": True,
+    "mode": "freepdb",
+    "host": "localhost",
+    "port": port,
+    "service": "FREEPDB1",
+    "user": "picooraclaw",
+    "password": pwd,
+    "onnxModel": onnx_model,
+}
+with open(cfg_path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+PY
+  ok "oracle: ${cfg} patched (oracle.enabled=true)"
+}
+
+oracle_schema_init() {
+  require_picooraclaw_dir
+  local bin="${PICOORACLAW_DIR}/build/picooraclaw"
+  [[ -x "${bin}" ]] || { err "oracle: ${bin} not built"; exit 1; }
+  log "oracle: initializing PICO_* schema via 'picooraclaw setup-oracle'"
+  ( cd "${PICOORACLAW_DIR}" && \
+    PICO_ORACLE_ENABLED=true \
+    PICO_ORACLE_PASSWORD="${ORACLE_PWD}" \
+    PICO_ORACLE_PORT="${ORACLE_HOST_PORT}" \
+    ./build/picooraclaw setup-oracle ) || { err "oracle: 'picooraclaw setup-oracle' failed"; exit 1; }
+  ok "oracle: schema ready"
 }
 
 bootstrap_oracle() {
@@ -120,39 +235,12 @@ bootstrap_oracle() {
     warn "oracle: SKIP_ORACLE=1 — using file-based fallback"
     return 0
   fi
-  require_picooraclaw_dir
-  detect_docker
-
-  set +e
   ensure_oracle_container
-  local rc=$?
-  set -e
-
-  local marker="${RUN_DIR}/oracle-bootstrapped"
-  if [[ ${rc} -eq 0 && -f "${marker}" ]]; then
-    return 0
-  fi
-
-  local script="${PICOORACLAW_DIR}/scripts/setup-oracle.sh"
-  if [[ ! -x "${script}" ]]; then
-    if [[ ${rc} -eq 2 ]]; then
-      err "oracle: ${script} missing — cannot bootstrap a new container."
-      exit 1
-    fi
-    warn "oracle: ${script} not executable, container is up but schema unverified"
-    return 0
-  fi
-
-  log "oracle: running setup-oracle.sh (creates container if missing, bootstraps user/schema/ONNX, ~2 min)"
-  if [[ "${DOCKER}" != "docker" ]]; then
-    # setup-oracle.sh calls `docker` directly — make it work under sudo by exporting an alias-like wrapper.
-    # Easiest: re-invoke the script with sudo so its `docker` calls inherit root.
-    ( cd "${PICOORACLAW_DIR}" && sudo -n -E env "PATH=$PATH" "HOME=$HOME" bash "${script}" "${ORACLE_PWD}" )
-  else
-    ( cd "${PICOORACLAW_DIR}" && "${script}" "${ORACLE_PWD}" )
-  fi
-  touch "${marker}"
-  ok "oracle: bootstrapped"
+  oracle_users_init
+  oracle_onnx_init
+  oracle_config_patch
+  oracle_schema_init
+  ok "oracle: bootstrap complete"
 }
 
 # ──────────────────────────────────────────────────────── OCI proxy ──
@@ -256,11 +344,24 @@ start_webui() {
 }
 
 # ──────────────────────────────────────────────────────────── commands ──
+public_ip() {
+  # Try cloud metadata first (OCI/AWS/GCP all expose 169.254.169.254), then dig +short, then ip route.
+  local ip
+  ip="$(curl -s -m 1 http://169.254.169.254/opc/v2/instance/ -H 'Authorization: Bearer Oracle' 2>/dev/null \
+        | grep -oE '"vnicId":"[^"]*"' | head -1 || true)"
+  ip="$(curl -s -m 1 https://api.ipify.org 2>/dev/null || true)"
+  if [[ -z "${ip}" ]]; then
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  echo "${ip:-localhost}"
+}
+
 cmd_up() {
   bootstrap_oracle
   start_proxy
   start_gateway
   start_webui
+  local pub; pub="$(public_ip)"
   cat <<EOF
 
 ${c_green}✓ Stack is up.${c_reset}
@@ -269,6 +370,7 @@ ${c_green}✓ Stack is up.${c_reset}
   Gateway   http://localhost:${GATEWAY_PORT}/health
   Web ch    http://localhost:${WEB_CH_PORT}/v1/sessions
   Web UI    http://localhost:${WEBUI_PORT}              (password: ${WEBUI_PASSWORD})
+  Public    http://${pub}:${WEBUI_PORT}        (password: ${WEBUI_PASSWORD})
 
   Logs:    ${LOG_DIR}/
   Status:  ${0##*/} status
@@ -329,10 +431,10 @@ cmd_logs() {
 }
 
 case "${1:-up}" in
-  up)     cmd_up ;;
-  down)   cmd_down ;;
-  status) cmd_status ;;
-  logs)   cmd_logs ;;
+  up|start)   cmd_up ;;
+  down|stop)  cmd_down ;;
+  status)     cmd_status ;;
+  logs)       cmd_logs ;;
   -h|--help|help)
     grep -E '^# ' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     ;;
