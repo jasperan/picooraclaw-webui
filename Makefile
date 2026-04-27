@@ -24,4 +24,5 @@ sync-static:
 	    rm -rf cmd/picooraclaw-webui/static; \
 	    mkdir -p cmd/picooraclaw-webui/static; \
 	    cp -r web/build/* cmd/picooraclaw-webui/static/; \
+	    touch cmd/picooraclaw-webui/static/.gitkeep; \
 	fi
