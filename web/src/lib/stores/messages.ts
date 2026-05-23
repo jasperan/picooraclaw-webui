@@ -40,10 +40,11 @@ function findAssistant(msgs: Message[], id?: string): Message | undefined {
 }
 
 export function appendUserMessage(sessionId: string, text: string) {
+	const id = `u-${Date.now()}`;
 	update(sessionId, (msgs) => [
 		...msgs,
 		{
-			id: `u-${Date.now()}`,
+			id,
 			role: 'user',
 			text,
 			streaming: false,
@@ -51,6 +52,7 @@ export function appendUserMessage(sessionId: string, text: string) {
 			ts: Date.now()
 		}
 	]);
+	return id;
 }
 
 export function applyEvent(sessionId: string, e: AgentEvent) {
@@ -127,7 +129,7 @@ export function applyEvent(sessionId: string, e: AgentEvent) {
 				return [
 					...msgs,
 					{
-						id: `err-${Date.now()}`,
+						id: e.client_id ? `err-${e.client_id}` : `err-${Date.now()}`,
 						role: 'assistant',
 						text: '',
 						streaming: false,

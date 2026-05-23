@@ -3,33 +3,31 @@ package main
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/jasperan/picooraclaw-webui/internal/bridge"
 	"github.com/jasperan/picooraclaw-webui/internal/ws"
 )
 
-// SessionPumps lazily starts one runSSEPump goroutine per subscribed
-// session. The original v1 design ran a single pump pinned to "default";
-// the gateway now mints fresh session IDs per chat (e.g. "s-mogjm0ue"),
-// so events for those sessions never reached the hub. Ensure() is the
-// fix: every time a WS client subscribes, we make sure a pump exists
-// for that session.
-//
-// Pumps are started on first subscribe and run for the lifetime of the
-// process (the goroutine exits when the parent ctx is cancelled at
-// shutdown). We don't refcount and stop pumps when the last subscriber
-// leaves: a pump that's not consumed costs a TCP connection plus a
-// goroutine, and re-establishing the SSE adds visible latency on every
-// resubscribe. Memory grows with distinct session IDs over the process
-// lifetime — acceptable for current usage; revisit with refcount + idle
-// timeout if it becomes a problem.
+const pumpIdleTimeout = 2 * time.Minute
+
+type sessionPump struct {
+	cancel context.CancelFunc
+	refs   int
+	timer  *time.Timer
+}
+
+// SessionPumps lazily starts one runSSEPump goroutine per subscribed session.
+// Pumps are reference counted and cancelled after a short idle timeout so a
+// process that sees many distinct session IDs does not keep a goroutine and
+// upstream SSE connection alive forever for each one.
 type SessionPumps struct {
 	ctx    context.Context
 	client *bridge.Client
 	hub    *ws.Hub
 
 	mu    sync.Mutex
-	known map[string]struct{}
+	pumps map[string]*sessionPump
 }
 
 func NewSessionPumps(ctx context.Context, client *bridge.Client, hub *ws.Hub) *SessionPumps {
@@ -37,7 +35,7 @@ func NewSessionPumps(ctx context.Context, client *bridge.Client, hub *ws.Hub) *S
 		ctx:    ctx,
 		client: client,
 		hub:    hub,
-		known:  make(map[string]struct{}),
+		pumps:  make(map[string]*sessionPump),
 	}
 }
 
@@ -46,11 +44,51 @@ func (p *SessionPumps) Ensure(sessionID string) {
 		return
 	}
 	p.mu.Lock()
-	if _, ok := p.known[sessionID]; ok {
+	if pump, ok := p.pumps[sessionID]; ok {
+		pump.refs++
+		if pump.timer != nil {
+			pump.timer.Stop()
+			pump.timer = nil
+		}
 		p.mu.Unlock()
 		return
 	}
-	p.known[sessionID] = struct{}{}
+	ctx, cancel := context.WithCancel(p.ctx)
+	p.pumps[sessionID] = &sessionPump{cancel: cancel, refs: 1}
 	p.mu.Unlock()
-	go runSSEPump(p.ctx, p.client, p.hub, sessionID)
+	go runSSEPump(ctx, p.client, p.hub, sessionID)
+}
+
+func (p *SessionPumps) Release(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	pump, ok := p.pumps[sessionID]
+	if !ok {
+		return
+	}
+	if pump.refs > 0 {
+		pump.refs--
+	}
+	if pump.refs != 0 || pump.timer != nil {
+		return
+	}
+	pump.timer = time.AfterFunc(pumpIdleTimeout, func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		current, ok := p.pumps[sessionID]
+		if !ok || current != pump || current.refs != 0 {
+			return
+		}
+		current.cancel()
+		delete(p.pumps, sessionID)
+	})
+}
+
+func (p *SessionPumps) Active() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.pumps)
 }

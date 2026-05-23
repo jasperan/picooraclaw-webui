@@ -107,3 +107,10 @@ func TestClient_SearchMemory_ErrorStatus(t *testing.T) {
 		t.Fatalf("expected upstream 500 error, got %v", err)
 	}
 }
+
+func TestNewClientCheckedRejectsInvalidBaseURL(t *testing.T) {
+	_, err := NewClientChecked("://bad", "")
+	if err == nil {
+		t.Fatal("expected invalid URL error")
+	}
+}

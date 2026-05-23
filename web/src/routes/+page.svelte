@@ -19,6 +19,8 @@
 	let memoryOpen = $state(false);
 	let ready = $state(false);
 	let sidebarOpen = $state(false);
+	let appStarted = false;
+	let cleanupFns: Array<() => void> = [];
 
 	onMount(() => {
 		// Svelte's onMount only allows a synchronous cleanup return; an `async`
@@ -45,18 +47,29 @@
 			}
 		};
 		window.addEventListener('keydown', onKey);
-		return () => window.removeEventListener('keydown', onKey);
+		return () => {
+			window.removeEventListener('keydown', onKey);
+			for (const cleanup of cleanupFns) cleanup();
+			cleanupFns = [];
+			appStarted = false;
+		};
 	});
 
 	function initApp() {
+		if (appStarted) return;
+		appStarted = true;
 		ready = true;
 		connect();
-		onEvent((e) => {
-			if (e.session_id) applyEvent(e.session_id, e);
-		});
-		currentSession.subscribe((sid) => {
-			if (sid) wsSubscribe(sid);
-		});
+		cleanupFns.push(
+			onEvent((e) => {
+				if (e.session_id) applyEvent(e.session_id, e);
+			})
+		);
+		cleanupFns.push(
+			currentSession.subscribe((sid) => {
+				if (sid) wsSubscribe(sid);
+			})
+		);
 	}
 
 	function onLoginSuccess() {
@@ -66,8 +79,8 @@
 
 	function handleSend(text: string) {
 		const sid = $currentSession;
-		appendUserMessage(sid, text);
-		sendMessage(sid, text);
+		const clientId = appendUserMessage(sid, text);
+		sendMessage(sid, text, clientId);
 	}
 
 	const messages = $derived($messagesBySession[$currentSession] ?? []);

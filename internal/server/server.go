@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"nhooyr.io/websocket"
 
@@ -17,6 +18,7 @@ import (
 // runSSEPump goroutines per session.
 type SessionSubscriber interface {
 	Ensure(sessionID string)
+	Release(sessionID string)
 }
 
 type Deps struct {
@@ -94,10 +96,15 @@ func NewMux(d Deps) *http.ServeMux {
 
 func handleWS(ctx context.Context, c *websocket.Conn, d Deps) {
 	conn := ws.NewWSConn(ctx, c)
-	defer d.Hub.Unregister(conn)
-	defer conn.Close()
 
 	var currentSession string
+	defer func() {
+		if currentSession != "" && d.Subscriber != nil {
+			d.Subscriber.Release(currentSession)
+		}
+		d.Hub.Unregister(conn)
+		conn.Close()
+	}()
 
 	for {
 		f, err := ws.ReadFrame(ctx, c)
@@ -106,8 +113,15 @@ func handleWS(ctx context.Context, c *websocket.Conn, d Deps) {
 		}
 		switch f.Type {
 		case "subscribe":
+			if f.SessionID == "" {
+				sendError(conn, "", f.ClientID, "subscribe requires session_id")
+				continue
+			}
 			if currentSession != "" {
 				d.Hub.Unregister(conn)
+				if d.Subscriber != nil {
+					d.Subscriber.Release(currentSession)
+				}
 			}
 			currentSession = f.SessionID
 			d.Hub.Register(conn, currentSession)
@@ -116,14 +130,31 @@ func handleWS(ctx context.Context, c *websocket.Conn, d Deps) {
 			}
 		case "send":
 			if currentSession == "" {
-				// Protocol: must subscribe before sending.
+				sendError(conn, f.SessionID, f.ClientID, "subscribe before sending")
 				continue
 			}
 			if f.SessionID == "" || f.Text == "" {
+				sendError(conn, currentSession, f.ClientID, "send requires session_id and text")
 				continue
 			}
 			// Pin to the subscribed session to prevent session spoofing.
-			_, _ = d.Client.PostChat(ctx, currentSession, f.Text, "")
+			if _, err := d.Client.PostChat(ctx, currentSession, f.Text, ""); err != nil {
+				sendError(conn, currentSession, f.ClientID, err.Error())
+			}
 		}
 	}
+}
+
+func sendError(conn ws.Conn, sessionID string, clientID string, message string) {
+	payload, err := json.Marshal(bridge.Event{
+		Type:      "error",
+		SessionID: sessionID,
+		ClientID:  clientID,
+		Error:     message,
+		Timestamp: time.Now(),
+	})
+	if err != nil {
+		return
+	}
+	_ = conn.Send(ws.Frame{Type: "event", Payload: payload})
 }

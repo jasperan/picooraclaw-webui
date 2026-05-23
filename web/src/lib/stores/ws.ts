@@ -4,6 +4,7 @@ export type AgentEvent = {
 	type: 'message_start' | 'message_end' | 'tool_call_start' | 'tool_call_end' | 'error' | 'agent_tick';
 	session_id?: string;
 	message_id?: string;
+	client_id?: string;
 	id?: string;
 	tool?: string;
 	args?: Record<string, unknown>;
@@ -17,13 +18,14 @@ export type AgentEvent = {
 
 type OutgoingFrame =
 	| { type: 'subscribe'; session_id: string; from?: string }
-	| { type: 'send'; session_id: string; text: string };
+	| { type: 'send'; session_id: string; text: string; client_id?: string };
 
 export const wsConnected = writable(false);
 
 let ws: WebSocket | null = null;
 let eventHandlers: Array<(e: AgentEvent) => void> = [];
 let reconnectDelay = 250;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Queue of frames to flush when the socket opens. Svelte stores fire their
 // subscribers synchronously on assignment, so subscribe() can be called before
@@ -35,40 +37,48 @@ let pending: OutgoingFrame[] = [];
 let lastSubscribe: { type: 'subscribe'; session_id: string; from?: string } | null = null;
 
 export function connect() {
+	if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+		return;
+	}
+	if (reconnectTimer) {
+		clearTimeout(reconnectTimer);
+		reconnectTimer = null;
+	}
 	// Drop any frames left over from a failed previous attempt so we don't
 	// replay a stale subscribe (and double-register in the hub) on reconnect.
 	pending = [];
 	const url = location.origin.replace(/^http/, 'ws') + '/ws';
-	ws = new WebSocket(url);
-	ws.onopen = () => {
+	const socket = new WebSocket(url);
+	ws = socket;
+	socket.onopen = () => {
+		if (ws !== socket) return;
 		wsConnected.set(true);
 		reconnectDelay = 250;
 		if (lastSubscribe) {
-			ws!.send(JSON.stringify(lastSubscribe));
+			socket.send(JSON.stringify(lastSubscribe));
 		}
 		for (const f of pending) {
-			ws!.send(JSON.stringify(f));
+			socket.send(JSON.stringify(f));
 		}
 		pending = [];
 	};
-	ws.onmessage = (ev) => {
+	socket.onmessage = (ev) => {
 		try {
-			const frame = JSON.parse(ev.data);
-			if (frame.type === 'event' && frame.payload) {
-				// Go bridge emits Frame.Payload as json.RawMessage, which surfaces as a
-				// directly-parsed JSON object in the browser.
-				const event = frame.payload as AgentEvent;
-				eventHandlers.forEach((h) => h(event));
+			const frame = JSON.parse(ev.data) as unknown;
+			if (isEventFrame(frame)) {
+				eventHandlers.forEach((h) => h(frame.payload));
 			}
 		} catch {
 			// Malformed frame — ignore.
 		}
 	};
-	ws.onclose = () => {
+	socket.onclose = () => {
+		if (ws !== socket) return;
+		ws = null;
 		wsConnected.set(false);
-		setTimeout(connect, Math.min((reconnectDelay *= 2), 8000));
+		reconnectTimer = setTimeout(connect, Math.min((reconnectDelay *= 2), 8000));
 	};
-	ws.onerror = () => ws?.close();
+	socket.onerror = () => socket.close();
 }
 
 export function subscribe(sessionId: string, from?: string) {
@@ -77,8 +87,8 @@ export function subscribe(sessionId: string, from?: string) {
 	send(frame);
 }
 
-export function sendMessage(sessionId: string, text: string) {
-	send({ type: 'send', session_id: sessionId, text });
+export function sendMessage(sessionId: string, text: string, clientId?: string) {
+	send({ type: 'send', session_id: sessionId, text, client_id: clientId });
 }
 
 export function onEvent(h: (e: AgentEvent) => void) {
@@ -94,4 +104,21 @@ function send(frame: OutgoingFrame) {
 		return;
 	}
 	pending.push(frame);
+}
+
+function isEventFrame(value: unknown): value is { type: 'event'; payload: AgentEvent } {
+	if (!value || typeof value !== 'object') return false;
+	const frame = value as { type?: unknown; payload?: unknown };
+	if (frame.type !== 'event' || !frame.payload || typeof frame.payload !== 'object') {
+		return false;
+	}
+	const event = frame.payload as { type?: unknown };
+	return (
+		event.type === 'message_start' ||
+		event.type === 'message_end' ||
+		event.type === 'tool_call_start' ||
+		event.type === 'tool_call_end' ||
+		event.type === 'error' ||
+		event.type === 'agent_tick'
+	);
 }

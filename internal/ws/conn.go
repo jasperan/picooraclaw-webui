@@ -36,6 +36,7 @@ type IncomingFrame struct {
 	SessionID string `json:"session_id"`
 	Text      string `json:"text"`
 	From      string `json:"from"`
+	ClientID  string `json:"client_id"`
 }
 
 func ReadFrame(ctx context.Context, c *websocket.Conn) (IncomingFrame, error) {

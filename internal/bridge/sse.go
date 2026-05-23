@@ -15,6 +15,7 @@ type Event struct {
 	Type       string         `json:"type"`
 	SessionID  string         `json:"session_id,omitempty"`
 	MessageID  string         `json:"message_id,omitempty"`
+	ClientID   string         `json:"client_id,omitempty"`
 	ToolCallID string         `json:"id,omitempty"`
 	Tool       string         `json:"tool,omitempty"`
 	Args       map[string]any `json:"args,omitempty"`

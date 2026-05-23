@@ -92,4 +92,19 @@ describe('messages store', () => {
 		expect(list[1].error).toBe('kaboom');
 		expect(list[1].streaming).toBe(false);
 	});
+
+	it('keeps failed send errors correlated to the client message id', () => {
+		const clientId = appendUserMessage('s4', 'hi');
+		applyEvent('s4', {
+			type: 'error',
+			session_id: 's4',
+			client_id: clientId,
+			error: 'upstream down'
+		});
+
+		const list = get(messagesBySession).s4;
+		expect(list).toHaveLength(2);
+		expect(list[1].id).toBe(`err-${clientId}`);
+		expect(list[1].error).toBe('upstream down');
+	});
 });

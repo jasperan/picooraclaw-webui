@@ -23,7 +23,10 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	client := bridge.NewClient(cfg.PicooraclawURL, cfg.UpstreamToken)
+	client, err := bridge.NewClientChecked(cfg.PicooraclawURL, cfg.UpstreamToken)
+	if err != nil {
+		log.Fatalf("upstream client: %v", err)
+	}
 	hub := ws.NewHub()
 	defer hub.Close()
 	gate := auth.NewGate(cfg.Password, cfg.Secret)
