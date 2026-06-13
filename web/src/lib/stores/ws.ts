@@ -1,7 +1,20 @@
 import { writable } from 'svelte/store';
 
+// The event types the bridge emits. Single source of truth for both the
+// AgentEvent union and the runtime guard in isEventFrame.
+const EVENT_TYPES = [
+	'message_start',
+	'message_end',
+	'tool_call_start',
+	'tool_call_end',
+	'error',
+	'agent_tick'
+] as const;
+
+type EventType = (typeof EVENT_TYPES)[number];
+
 export type AgentEvent = {
-	type: 'message_start' | 'message_end' | 'tool_call_start' | 'tool_call_end' | 'error' | 'agent_tick';
+	type: EventType;
 	session_id?: string;
 	message_id?: string;
 	client_id?: string;
@@ -82,9 +95,8 @@ export function connect() {
 }
 
 export function subscribe(sessionId: string, from?: string) {
-	const frame: OutgoingFrame = { type: 'subscribe', session_id: sessionId, from };
 	lastSubscribe = { type: 'subscribe', session_id: sessionId, from };
-	send(frame);
+	send(lastSubscribe);
 }
 
 export function sendMessage(sessionId: string, text: string, clientId?: string) {
@@ -113,12 +125,5 @@ function isEventFrame(value: unknown): value is { type: 'event'; payload: AgentE
 		return false;
 	}
 	const event = frame.payload as { type?: unknown };
-	return (
-		event.type === 'message_start' ||
-		event.type === 'message_end' ||
-		event.type === 'tool_call_start' ||
-		event.type === 'tool_call_end' ||
-		event.type === 'error' ||
-		event.type === 'agent_tick'
-	);
+	return EVENT_TYPES.includes(event.type as EventType);
 }

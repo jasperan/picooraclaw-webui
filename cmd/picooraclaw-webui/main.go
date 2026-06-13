@@ -28,7 +28,6 @@ func main() {
 		log.Fatalf("upstream client: %v", err)
 	}
 	hub := ws.NewHub()
-	defer hub.Close()
 	gate := auth.NewGate(cfg.Password, cfg.Secret)
 	defer gate.Stop()
 
@@ -76,52 +75,25 @@ func runSSEPump(ctx context.Context, client *bridge.Client, hub *ws.Hub, session
 	for {
 		events := make(chan bridge.Event, 64)
 		streamCtx, streamCancel := context.WithCancel(ctx)
-		done := make(chan struct{})
 		go func() {
+			// The spawning goroutine owns events and closes it once Stream
+			// returns (sse.go documents this contract), so the drain below is a
+			// single range that naturally finishes any buffered events.
 			err := client.Stream(streamCtx, sessionID, "", events)
 			if err != nil && ctx.Err() == nil {
 				log.Printf("sse stream: %v (retrying)", err)
 			}
-			close(done)
+			close(events)
 		}()
 
-		drain := func() {
-			for {
-				select {
-				case e, ok := <-events:
-					if !ok {
-						return
-					}
-					buf, err := json.Marshal(e)
-					if err != nil {
-						log.Printf("sse pump: marshal: %v", err)
-						continue
-					}
-					hub.Broadcast(e.SessionID, ws.Frame{Type: "event", Payload: buf})
-				case <-done:
-					// Drain any remaining buffered events before reconnecting.
-					for {
-						select {
-						case e, ok := <-events:
-							if !ok {
-								return
-							}
-							buf, err := json.Marshal(e)
-							if err != nil {
-								log.Printf("sse pump: marshal: %v", err)
-								continue
-							}
-							hub.Broadcast(e.SessionID, ws.Frame{Type: "event", Payload: buf})
-						default:
-							return
-						}
-					}
-				case <-ctx.Done():
-					return
-				}
+		for e := range events {
+			buf, err := json.Marshal(e)
+			if err != nil {
+				log.Printf("sse pump: marshal: %v", err)
+				continue
 			}
+			hub.Broadcast(e.SessionID, ws.Frame{Type: "event", Payload: buf})
 		}
-		drain()
 		streamCancel()
 
 		if ctx.Err() != nil {

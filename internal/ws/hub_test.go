@@ -29,7 +29,6 @@ func (c *fakeConn) frameCount() int {
 
 func TestHub_SubscribeAndBroadcast(t *testing.T) {
 	h := NewHub()
-	defer h.Close()
 
 	cA := &fakeConn{id: "a"}
 	cB := &fakeConn{id: "b"}
@@ -49,7 +48,6 @@ func TestHub_SubscribeAndBroadcast(t *testing.T) {
 
 func TestHub_Unregister(t *testing.T) {
 	h := NewHub()
-	defer h.Close()
 	c := &fakeConn{id: "a"}
 	h.Register(c, "s1")
 	h.Unregister(c)
@@ -61,7 +59,6 @@ func TestHub_Unregister(t *testing.T) {
 
 func TestHub_ConcurrentRegisterAndBroadcast(t *testing.T) {
 	h := NewHub()
-	defer h.Close()
 
 	var wg sync.WaitGroup
 	const N = 50

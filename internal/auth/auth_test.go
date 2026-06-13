@@ -23,8 +23,9 @@ func TestGate_LoginAndCookieRoundTrip(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/login", strings.NewReader(`{"password":"pw"}`))
-	if !g.HandleLogin(rr, req) {
-		t.Fatal("login should succeed")
+	g.HandleLogin(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("login should succeed, got %d", rr.Code)
 	}
 	cookies := rr.Result().Cookies()
 	if len(cookies) != 1 || cookies[0].Name != "pwac_session" {
@@ -52,8 +53,12 @@ func TestGate_WrongPasswordCooldown(t *testing.T) {
 	rr := httptest.NewRecorder()
 	req, _ := http.NewRequest("POST", "/login", strings.NewReader(`{"password":"pw"}`))
 	req.RemoteAddr = "1.2.3.4:1"
-	if g.HandleLogin(rr, req) {
-		t.Fatal("expected cooldown to block even correct password")
+	g.HandleLogin(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected cooldown to block even correct password, got %d", rr.Code)
+	}
+	if got := rr.Header().Get("Retry-After"); got != "30" {
+		t.Fatalf("cooldown should set Retry-After: 30, got %q", got)
 	}
 }
 

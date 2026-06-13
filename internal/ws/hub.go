@@ -18,14 +18,11 @@ type Conn interface {
 type Hub struct {
 	mu    sync.RWMutex
 	conns map[string]map[Conn]struct{}
-	done  chan struct{}
-	once  sync.Once
 }
 
 func NewHub() *Hub {
 	return &Hub{
 		conns: make(map[string]map[Conn]struct{}),
-		done:  make(chan struct{}),
 	}
 }
 
@@ -63,8 +60,4 @@ func (h *Hub) Broadcast(sessionID string, f Frame) {
 	for _, c := range targets {
 		_ = c.Send(f)
 	}
-}
-
-func (h *Hub) Close() {
-	h.once.Do(func() { close(h.done) })
 }

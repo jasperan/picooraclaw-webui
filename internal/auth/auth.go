@@ -52,23 +52,30 @@ func (g *Gate) sweepLoop() {
 	}
 }
 
+// sweep prunes every IP's stale attempts and GCs IPs that have gone idle.
 func (g *Gate) sweep() {
-	cutoff := time.Now().Add(-30 * time.Second)
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	for ip, ts := range g.attempts {
-		kept := ts[:0]
-		for _, t := range ts {
-			if t.After(cutoff) {
-				kept = append(kept, t)
-			}
-		}
-		if len(kept) == 0 {
+	for ip := range g.attempts {
+		if len(g.pruneLocked(ip)) == 0 {
 			delete(g.attempts, ip)
-		} else {
-			g.attempts[ip] = kept
 		}
 	}
+}
+
+// pruneLocked drops attempts older than the 30s window for ip and stores the
+// survivors back. Callers must hold g.mu.
+func (g *Gate) pruneLocked(ip string) []time.Time {
+	cutoff := time.Now().Add(-30 * time.Second)
+	ts := g.attempts[ip]
+	kept := ts[:0]
+	for _, t := range ts {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	g.attempts[ip] = kept
+	return kept
 }
 
 // Authorized returns true iff the request is permitted.
@@ -84,16 +91,18 @@ func (g *Gate) Authorized(r *http.Request) bool {
 	return g.verify(c.Value)
 }
 
-// HandleLogin processes POST /api/login; returns true on success (cookie set).
-func (g *Gate) HandleLogin(w http.ResponseWriter, r *http.Request) bool {
+// HandleLogin processes POST /api/login, setting the session cookie on success.
+// On cooldown it returns 429 with a Retry-After header; on a bad password, 401.
+func (g *Gate) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	if g.password == "" {
 		w.WriteHeader(http.StatusNoContent)
-		return true
+		return
 	}
 	ip := clientIP(r)
 	if g.cooldown(ip) {
+		w.Header().Set("Retry-After", "30")
 		http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
-		return false
+		return
 	}
 	var body struct {
 		Password string `json:"password"`
@@ -102,7 +111,7 @@ func (g *Gate) HandleLogin(w http.ResponseWriter, r *http.Request) bool {
 	if body.Password != g.password {
 		g.recordAttempt(ip)
 		http.Error(w, "invalid password", http.StatusUnauthorized)
-		return false
+		return
 	}
 	g.clearAttempts(ip)
 
@@ -113,7 +122,6 @@ func (g *Gate) HandleLogin(w http.ResponseWriter, r *http.Request) bool {
 		Expires: expires, HttpOnly: true, SameSite: http.SameSiteLaxMode,
 	})
 	w.WriteHeader(http.StatusNoContent)
-	return true
 }
 
 func (g *Gate) sign(payload string) string {
@@ -143,15 +151,7 @@ func (g *Gate) verify(v string) bool {
 func (g *Gate) cooldown(ip string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	cutoff := time.Now().Add(-30 * time.Second)
-	kept := make([]time.Time, 0)
-	for _, t := range g.attempts[ip] {
-		if t.After(cutoff) {
-			kept = append(kept, t)
-		}
-	}
-	g.attempts[ip] = kept
-	return len(kept) >= 3
+	return len(g.pruneLocked(ip)) >= 3
 }
 
 func (g *Gate) recordAttempt(ip string) {

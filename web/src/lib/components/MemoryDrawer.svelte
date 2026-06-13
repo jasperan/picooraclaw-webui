@@ -2,12 +2,13 @@
 	import { fly, fade } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 
+	// Mirrors bridge.MemoryResult from the Go side, which /api/memory always
+	// returns as a JSON array.
 	type MemoryHit = {
-		id?: string | number;
-		content?: string;
-		text?: string;
-		score?: number;
-		metadata?: Record<string, unknown>;
+		id: string;
+		text: string;
+		score: number;
+		date: number;
 	};
 
 	type Props = {
@@ -44,8 +45,7 @@
 			if (!res.ok) {
 				throw new Error(`HTTP ${res.status}`);
 			}
-			const data = await res.json();
-			results = Array.isArray(data) ? data : (data?.results ?? []);
+			results = (await res.json()) as MemoryHit[];
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			results = [];
@@ -53,10 +53,6 @@
 			loading = false;
 			searched = true;
 		}
-	}
-
-	function hitText(h: MemoryHit): string {
-		return h.content ?? h.text ?? JSON.stringify(h);
 	}
 
 	function onKeydown(ev: KeyboardEvent) {
@@ -153,11 +149,12 @@
 						<li>
 							<div class="hit-head">
 								<span class="hit-id">#{h.id ?? i}</span>
-								{#if h.score !== undefined}
-									<span class="score">{h.score.toFixed(3)}</span>
-								{/if}
+								<span class="score">{h.score.toFixed(3)}</span>
 							</div>
-							<div class="text">{hitText(h)}</div>
+							<div class="text">{h.text}</div>
+							{#if h.date}
+								<time class="hit-date">{new Date(h.date * 1000).toLocaleDateString()}</time>
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -418,6 +415,14 @@
 		font-size: 0.88rem;
 		line-height: 1.55;
 		color: var(--fg);
+	}
+
+	.hit-date {
+		display: block;
+		margin-top: 6px;
+		font-family: var(--font-mono);
+		font-size: 0.68rem;
+		color: var(--fg-faint);
 	}
 
 	.foot {

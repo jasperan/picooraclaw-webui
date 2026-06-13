@@ -367,10 +367,8 @@ start_webui() {
 
 # ──────────────────────────────────────────────────────────── commands ──
 public_ip() {
-  # Try cloud metadata first (OCI/AWS/GCP all expose 169.254.169.254), then dig +short, then ip route.
+  # Ask ipify for the public IP, then fall back to the first local interface.
   local ip
-  ip="$(curl -s -m 1 http://169.254.169.254/opc/v2/instance/ -H 'Authorization: Bearer Oracle' 2>/dev/null \
-        | grep -oE '"vnicId":"[^"]*"' | head -1 || true)"
   ip="$(curl -s -m 1 https://api.ipify.org 2>/dev/null || true)"
   if [[ -z "${ip}" ]]; then
     ip="$(hostname -I 2>/dev/null | awk '{print $1}')"

@@ -10,6 +10,16 @@ import (
 	"testing"
 )
 
+// mustClient builds a Client for tests, failing fast on an invalid base URL.
+func mustClient(t *testing.T, baseURL, token string) *Client {
+	t.Helper()
+	c, err := NewClientChecked(baseURL, token)
+	if err != nil {
+		t.Fatalf("NewClientChecked(%q): %v", baseURL, err)
+	}
+	return c
+}
+
 func TestClient_PostChat(t *testing.T) {
 	var gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +33,7 @@ func TestClient_PostChat(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "")
+	c := mustClient(t, srv.URL, "")
 	mid, err := c.PostChat(context.Background(), "s1", "hi", "")
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +55,7 @@ func TestClient_UpstreamTokenHeader(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "secret")
+	c := mustClient(t, srv.URL, "secret")
 	_, _ = c.PostChat(context.Background(), "s", "t", "")
 }
 
@@ -57,7 +67,7 @@ func TestClient_ListSessions(t *testing.T) {
 		_, _ = w.Write([]byte(`[{"id":"s1","title":"one","last_at":10}]`))
 	}))
 	defer srv.Close()
-	c := NewClient(srv.URL, "")
+	c := mustClient(t, srv.URL, "")
 	s, err := c.ListSessions(context.Background())
 	if err != nil || len(s) != 1 || s[0].ID != "s1" {
 		t.Fatalf("got %+v err=%v", s, err)
@@ -75,7 +85,7 @@ func TestClient_SearchMemory(t *testing.T) {
 		_, _ = w.Write([]byte(`[{"id":"m1","text":"likes go","score":0.9,"date":1}]`))
 	}))
 	defer srv.Close()
-	c := NewClient(srv.URL, "")
+	c := mustClient(t, srv.URL, "")
 	r, err := c.SearchMemory(context.Background(), "go", 5)
 	if err != nil || len(r) != 1 || r[0].ID != "m1" {
 		t.Fatalf("got %+v err=%v", r, err)
@@ -88,7 +98,7 @@ func TestClient_ListSessions_ErrorStatus(t *testing.T) {
 		_, _ = w.Write([]byte("internal server error"))
 	}))
 	defer srv.Close()
-	c := NewClient(srv.URL, "")
+	c := mustClient(t, srv.URL, "")
 	_, err := c.ListSessions(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "upstream 500") {
 		t.Fatalf("expected upstream 500 error, got %v", err)
@@ -101,7 +111,7 @@ func TestClient_SearchMemory_ErrorStatus(t *testing.T) {
 		_, _ = w.Write([]byte("internal server error"))
 	}))
 	defer srv.Close()
-	c := NewClient(srv.URL, "")
+	c := mustClient(t, srv.URL, "")
 	_, err := c.SearchMemory(context.Background(), "go", 5)
 	if err == nil || !strings.Contains(err.Error(), "upstream 500") {
 		t.Fatalf("expected upstream 500 error, got %v", err)

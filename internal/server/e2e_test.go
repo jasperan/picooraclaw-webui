@@ -13,7 +13,6 @@ import (
 	"nhooyr.io/websocket"
 
 	"github.com/jasperan/picooraclaw-webui/internal/auth"
-	"github.com/jasperan/picooraclaw-webui/internal/bridge"
 	"github.com/jasperan/picooraclaw-webui/internal/ws"
 )
 
@@ -36,9 +35,8 @@ func TestE2E_WSSubscribeSendAndReceive(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	client := bridge.NewClient(upstream.URL, "")
+	client := mustClient(t, upstream.URL)
 	hub := ws.NewHub()
-	defer hub.Close()
 	gate := auth.NewGate("", "secretXXXXXXXXXXXXXXXXXXXXXXXXXX")
 	defer gate.Stop()
 

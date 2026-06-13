@@ -27,7 +27,7 @@ func TestSSE_StreamsParsedEvents(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewClient(srv.URL, "")
+	c := mustClient(t, srv.URL, "")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 

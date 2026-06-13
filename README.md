@@ -118,14 +118,20 @@ cd web && npm run test:e2e
 ## Layout
 
 ```
-cmd/picooraclaw-webui/  Go HTTP+WS server, embedded static assets
-internal/               IPC client, session store, auth
+cmd/picooraclaw-webui/  Go HTTP+WS server, per-session SSE pumps, embedded static assets
+internal/bridge/        upstream picooraclaw HTTP + SSE client
+internal/ws/            WebSocket hub (sessionID → connections fanout)
+internal/auth/          optional password gate (HMAC-signed cookies)
+internal/server/        HTTP mux and WebSocket frame handling
+internal/config/        flag/env configuration
 web/                    SvelteKit frontend
 scripts/stack.sh        One-command launcher (oracle + onnx2oracle + gateway + webui)
 docs/                   Architecture notes and Phase 3 status
 Dockerfile              Multi-stage: node → go → alpine (~35 MB runtime)
 docker-compose.yml      oracle + picooraclaw + webui bundle
 ```
+
+The bridge owns no domain data — sessions and memory live in Oracle via picooraclaw.
 
 ## Full end-to-end (manual)
 

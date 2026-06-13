@@ -15,12 +15,21 @@ import (
 	"github.com/jasperan/picooraclaw-webui/internal/ws"
 )
 
+// mustClient builds a bridge.Client for tests, failing fast on a bad base URL.
+func mustClient(t *testing.T, baseURL string) *bridge.Client {
+	t.Helper()
+	c, err := bridge.NewClientChecked(baseURL, "")
+	if err != nil {
+		t.Fatalf("NewClientChecked(%q): %v", baseURL, err)
+	}
+	return c
+}
+
 func TestMux_AuthRequiredForAPI(t *testing.T) {
 	gate := auth.NewGate("pw", "secretXXXXXXXXXXXXXXXXXXXXXXXXXX")
 	defer gate.Stop()
 	hub := ws.NewHub()
-	defer hub.Close()
-	client := bridge.NewClient("http://upstream.invalid", "")
+	client := mustClient(t, "http://upstream.invalid")
 
 	m := NewMux(Deps{
 		Gate:   gate,
@@ -57,14 +66,13 @@ func TestWS_SendWithoutSubscribe_Ignored(t *testing.T) {
 	gate := auth.NewGate("", "secretXXXXXXXXXXXXXXXXXXXXXXXXXX")
 	defer gate.Stop()
 	hub := ws.NewHub()
-	defer hub.Close()
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("upstream must NOT be called: %s %s", r.Method, r.URL.Path)
 		w.WriteHeader(500)
 	}))
 	defer upstream.Close()
-	client := bridge.NewClient(upstream.URL, "")
+	client := mustClient(t, upstream.URL)
 
 	m := NewMux(Deps{Gate: gate, Client: client, Hub: hub, Static: http.NotFoundHandler()})
 	srv := httptest.NewServer(m)
