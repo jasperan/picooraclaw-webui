@@ -5,14 +5,14 @@ services:
     image: container-registry.oracle.com/database/free:latest
     container_name: picooraclaw-oracle
     environment:
-      ORACLE_PWD: ${ORACLE_PWD:-oracle}
+      ORACLE_PWD: ${ORACLE_PWD:?Set ORACLE_PWD to a unique database password}
       ORACLE_CHARACTERSET: AL32UTF8
     ports:
       - "127.0.0.1:${ORACLE_PORT:-1521}:1521"
     volumes:
       - oracle-data:/opt/oracle/oradata
     healthcheck:
-      test: ["CMD", "sh", "-c", "echo 'select 1 from dual;' | sqlplus -s system/${ORACLE_PWD:-oracle}@//localhost:1521/FREEPDB1 | grep -q '^\\s*1$$'"]
+      test: ["CMD", "sh", "-c", "echo 'select 1 from dual;' | sqlplus -s system/${ORACLE_PWD:?Set ORACLE_PWD}@//localhost:1521/FREEPDB1 | grep -q '^\\s*1$$'"]
       interval: 30s
       timeout: 10s
       retries: 20
@@ -25,7 +25,7 @@ services:
       oracle:
         condition: service_healthy
     environment:
-      ORACLE_DSN: "system/${ORACLE_PWD:-oracle}@oracle:1521/FREEPDB1"
+      ORACLE_DSN: "system/${ORACLE_PWD:?Set ORACLE_PWD}@oracle:1521/FREEPDB1"
       PICOORACLAW_IPC: "/tmp/picooraclaw.sock"
     volumes:
       - picooraclaw-sock:/tmp
@@ -38,11 +38,16 @@ services:
       - picooraclaw
     environment:
       PICOORACLAW_IPC: "/tmp/picooraclaw.sock"
-      PORT: "3000"
+      # The binary reads PICOORACLAW_WEBUI_LISTEN and PICOORACLAW_WEBUI_PASSWORD (config.go:24-25).
+      # The previous PORT variable was never read by anything, and without a password the server
+      # refuses to start: a non-loopback bind with no password is the combination the fail-closed
+      # guard blocks, so `docker compose up` could never bring this service up.
+      PICOORACLAW_WEBUI_LISTEN: ":3000"
+      PICOORACLAW_WEBUI_PASSWORD: ${WEBUI_PASSWORD:?Set WEBUI_PASSWORD for the browser login}
     volumes:
       - picooraclaw-sock:/tmp
     ports:
-      - "${WEBUI_PORT:-3000}:3000"
+      - "127.0.0.1:${WEBUI_PORT:-3000}:3000"
     restart: unless-stopped
 
 volumes:
