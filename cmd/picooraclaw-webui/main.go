@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,10 +19,36 @@ import (
 	"github.com/jasperan/picooraclaw-webui/internal/ws"
 )
 
+func isLoopbackListen(addr string) bool {
+	// Accepts "127.0.0.1:3000", "localhost:3000" and "[::1]:3000"; rejects ":3000" and
+	// "0.0.0.0:3000", which expose every interface.
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(host) {
+	case "localhost", "::1":
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func main() {
 	cfg, err := config.Load(os.Args[1:])
 	if err != nil {
 		log.Fatalf("config: %v", err)
+	}
+
+	// Fail closed on the dangerous combination: with no password the gate allows every
+	// request (see auth.Gate.Authorized), so listening beyond loopback would publish an
+	// unprotected dashboard. Setting PICOORACLAW_WEBUI_PASSWORD/--password enables remote use.
+	if cfg.Password == "" && !isLoopbackListen(cfg.Listen) {
+		log.Fatalf(
+			"refusing to listen on %s without a password: set PICOORACLAW_WEBUI_PASSWORD "+
+				"(or --password), or bind 127.0.0.1. The UI has no other access control.",
+			cfg.Listen,
+		)
 	}
 
 	client, err := bridge.NewClientChecked(cfg.PicooraclawURL, cfg.UpstreamToken)

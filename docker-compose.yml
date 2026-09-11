@@ -8,7 +8,7 @@ services:
       ORACLE_PWD: ${ORACLE_PWD:-oracle}
       ORACLE_CHARACTERSET: AL32UTF8
     ports:
-      - "${ORACLE_PORT:-1521}:1521"
+      - "127.0.0.1:${ORACLE_PORT:-1521}:1521"
     volumes:
       - oracle-data:/opt/oracle/oradata
     healthcheck:

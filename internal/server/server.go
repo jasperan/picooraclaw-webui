@@ -81,7 +81,10 @@ func NewMux(d Deps) *http.ServeMux {
 			return
 		}
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-			OriginPatterns: []string{"*"},
+			// Only the host serving this UI may open the socket. AcceptOptions always
+			// authorises the request host, so omitting wildcard patterns blocks cross-site
+			// WebSocket hijacking while keeping LAN access (Origin host == Host) working.
+			OriginPatterns: nil,
 		})
 		if err != nil {
 			return
