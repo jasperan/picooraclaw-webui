@@ -16,7 +16,8 @@
 #   WEB_CH_PORT         picooraclaw web channel port       (default: 8090)
 #   GATEWAY_PORT        picooraclaw gateway health port    (default: 18790)
 #   WEBUI_PORT          host port for the browser UI       (default: 3000)
-#   WEBUI_PASSWORD      single-field login password        (default: demo)
+#   WEBUI_PASSWORD      single-field login password        (default: generated, printed on up)
+#   WEB_CH_HOST         gateway web channel bind host       (default: 127.0.0.1)
 #   SKIP_ORACLE=1       skip Oracle entirely (file-based fallback)
 #   SKIP_PROXY=1        skip the OCI GenAI proxy
 #
@@ -39,9 +40,13 @@ ORACLE_CONTAINER="${ORACLE_CONTAINER:-oracle-free}"
 ORACLE_PWD="${ORACLE_PWD:-PicoOraclaw123}"
 PROXY_PORT="${PROXY_PORT:-9999}"
 WEB_CH_PORT="${WEB_CH_PORT:-8090}"
+WEB_CH_HOST="${WEB_CH_HOST:-127.0.0.1}"
 GATEWAY_PORT="${GATEWAY_PORT:-18790}"
 WEBUI_PORT="${WEBUI_PORT:-3000}"
-WEBUI_PASSWORD="${WEBUI_PASSWORD:-demo}"
+# No default: the UI is published on every interface below, and "demo" is the first
+# password anyone would try. Generate one when the operator does not supply it and
+# print it in the summary, which is what this script already does with the password.
+WEBUI_PASSWORD="${WEBUI_PASSWORD:-$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')}"
 
 c_blue=$'\033[36m'; c_yellow=$'\033[33m'; c_red=$'\033[31m'; c_green=$'\033[32m'; c_reset=$'\033[0m'
 log()  { printf '%s[stack]%s %s\n' "${c_blue}"   "${c_reset}" "$*"; }
@@ -207,9 +212,17 @@ oracle_config_patch() {
     err "oracle: ${cfg} missing — run picooraclaw onboard first"
     exit 1
   fi
-  python3 - "${cfg}" "${ORACLE_PWD}" "${ORACLE_HOST_PORT}" "${ONNX_MODEL_NAME}" "${WEB_CH_PORT}" <<'PY'
-import json, sys
-cfg_path, pwd, port, onnx_model, web_port = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4], int(sys.argv[5])
+  python3 - "${cfg}" "${ORACLE_PWD}" "${ORACLE_HOST_PORT}" "${ONNX_MODEL_NAME}" "${WEB_CH_PORT}" "${WEB_CH_HOST}" <<'PY'
+import json
+import secrets, sys
+cfg_path, pwd, port, onnx_model, web_port, chan_host = (
+    sys.argv[1],
+    sys.argv[2],
+    int(sys.argv[3]),
+    sys.argv[4],
+    int(sys.argv[5]),
+    sys.argv[6],
+)
 with open(cfg_path) as f:
     cfg = json.load(f)
 cfg["oracle"] = {
@@ -226,17 +239,37 @@ cfg["oracle"] = {
 # channel on, but if that wiring breaks (or someone runs `picooraclaw gateway`
 # without the flag) the port never opens. Pin it in config so the source of
 # truth is one place.
+#
+# The token is generated on first run and kept afterwards. The gateway refuses to
+# start the web channel at all when the host is not loopback and the token is empty
+# (picooraclaw pkg/channels/web/channel.go: "web channel refuses to listen on %q
+# without a token"), so the empty value this script used to pin made `stack.sh up`
+# fail: the readiness probe below waits for :WEB_CH_PORT/v1/sessions, which never
+# answers, and the script exits before starting the web UI. The host defaults to
+# loopback for the same reason - the UI needs no LAN exposure to work.
 channels = cfg.setdefault("channels", {})
 web = channels.setdefault("web", {})
 web["enabled"] = True
-web.setdefault("host", "0.0.0.0")
+# Assigned rather than setdefault: the previous version of this script pinned 0.0.0.0, and that
+# value persists in existing configs. Migrating it is safe - the gateway refused to start that
+# combination - and an operator who wants LAN exposure sets WEB_CH_HOST explicitly.
+web["host"] = chan_host
 web.setdefault("port", web_port)
-web.setdefault("token", "")
+if not web.get("token"):
+    web["token"] = secrets.token_urlsafe(32)
 with open(cfg_path, "w") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
 PY
   ok "oracle: ${cfg} patched (oracle.enabled=true, channels.web.enabled=true)"
+  local tok
+  tok="$(python3 - "${cfg}" <<'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+print(cfg.get("channels", {}).get("web", {}).get("token", ""))
+PY
+)"
+  [[ -n "${tok}" ]] && ok "gateway: web channel token is set (${cfg##*/} channels.web.token)"
 }
 
 oracle_schema_init() {
